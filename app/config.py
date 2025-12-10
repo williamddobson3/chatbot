@@ -42,10 +42,11 @@ class Config:
     def get_generation_kwargs(cls) -> dict:
         """Get text generation kwargs."""
         return {
-            "max_length": cls.MAX_LENGTH,
+            "max_new_tokens": min(cls.MAX_LENGTH, 2048),  # Use max_new_tokens instead of max_length
             "temperature": cls.TEMPERATURE,
             "top_p": cls.TOP_P,
             "top_k": cls.TOP_K,
             "do_sample": True,
+            "pad_token_id": None,  # Will be set in model if needed
         }
 

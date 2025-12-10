@@ -76,9 +76,19 @@ async def index():
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
+    model_status = "not_loaded"
+    if chatbot is None:
+        model_status = "not_initialized"
+    elif not chatbot.is_loaded():
+        model_status = "loading_failed"
+    else:
+        model_status = "loaded"
+    
     return {
-        "status": "healthy",
-        "model_loaded": chatbot is not None and chatbot.is_loaded() if chatbot else False
+        "status": "healthy" if model_status == "loaded" else "degraded",
+        "model_loaded": model_status == "loaded",
+        "model_status": model_status,
+        "device": Config.DEVICE
     }
 
 
@@ -100,18 +110,28 @@ async def chat(request: ChatRequest):
         if request.temperature is not None:
             gen_kwargs["temperature"] = request.temperature
         if request.max_length is not None:
-            gen_kwargs["max_length"] = request.max_length
+            gen_kwargs["max_new_tokens"] = min(request.max_length, 2048)  # Convert to max_new_tokens
         if request.top_p is not None:
             gen_kwargs["top_p"] = request.top_p
         
         # Generate response
+        logger.info(f"Generating response with {len(messages)} messages")
         response = chatbot.chat(messages, **gen_kwargs)
+        logger.info(f"Generated response length: {len(response)}")
         
         return ChatResponse(response=response, status="success")
         
     except Exception as e:
-        logger.error(f"Error processing chat request: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
+        import traceback
+        error_detail = str(e)
+        error_traceback = traceback.format_exc()
+        logger.error(f"Error processing chat request: {error_detail}")
+        logger.error(f"Traceback: {error_traceback}")
+        # Return a user-friendly error message
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error generating response: {error_detail}. Please check server logs for details."
+        )
 
 
 if __name__ == "__main__":

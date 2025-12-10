@@ -73,32 +73,54 @@ class QwenChatbot:
         """
         try:
             # Prepare generation parameters
-            gen_kwargs = Config.get_generation_kwargs()
+            gen_kwargs = Config.get_generation_kwargs().copy()
             gen_kwargs.update(generation_kwargs)
             
-            # Ensure we have max_new_tokens instead of max_length for better control
-            if "max_length" in gen_kwargs and "max_new_tokens" not in gen_kwargs:
-                gen_kwargs["max_new_tokens"] = gen_kwargs.pop("max_length")
+            # Convert max_length to max_new_tokens if present
+            if "max_length" in gen_kwargs:
+                if "max_new_tokens" not in gen_kwargs:
+                    # max_length includes input, so we need to calculate max_new_tokens
+                    # For now, use a reasonable default or the provided value
+                    gen_kwargs["max_new_tokens"] = min(gen_kwargs.pop("max_length"), 2048)
+                else:
+                    gen_kwargs.pop("max_length")  # Remove max_length if max_new_tokens exists
+            
+            # Ensure max_new_tokens is set
+            if "max_new_tokens" not in gen_kwargs:
+                gen_kwargs["max_new_tokens"] = 512  # Default reasonable value
+            
+            # Remove max_length from kwargs to avoid conflicts
+            gen_kwargs.pop("max_length", None)
             
             # Format messages for Qwen using chat template
-            if hasattr(self.tokenizer, 'apply_chat_template'):
-                text = self.tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True
-                )
-            else:
-                # Fallback for older tokenizers
+            try:
+                if hasattr(self.tokenizer, 'apply_chat_template'):
+                    text = self.tokenizer.apply_chat_template(
+                        messages,
+                        tokenize=False,
+                        add_generation_prompt=True
+                    )
+                else:
+                    # Fallback for older tokenizers
+                    text = self._format_messages_manual(messages)
+            except Exception as e:
+                logger.warning(f"Error applying chat template: {e}, using manual formatting")
                 text = self._format_messages_manual(messages)
             
             # Tokenize
             model_inputs = self.tokenizer([text], return_tensors="pt").to(self.device)
             input_length = model_inputs.input_ids.shape[1]
             
+            # Set pad_token if not set
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            
             # Generate
             with torch.no_grad():
                 generated_ids = self.model.generate(
                     **model_inputs,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
                     **gen_kwargs
                 )
             
@@ -115,7 +137,7 @@ class QwenChatbot:
             return response.strip()
             
         except Exception as e:
-            logger.error(f"Error during generation: {str(e)}")
+            logger.error(f"Error during generation: {str(e)}", exc_info=True)
             raise
     
     def _format_messages_manual(self, messages: List[Dict[str, str]]) -> str:
