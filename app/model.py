@@ -21,10 +21,25 @@ class QwenChatbot:
     
     def _get_valid_device(self, device: str) -> str:
         """Get a valid device string, ensuring CUDA is available if requested."""
-        if device == "cuda" and not torch.cuda.is_available():
-            logger.warning("CUDA requested but not available. Using CPU instead.")
+        # Check CUDA availability
+        cuda_available = torch.cuda.is_available()
+        
+        if device in ("cuda", "auto"):
+            if cuda_available:
+                logger.info(f"CUDA is available. Using GPU: {torch.cuda.get_device_name(0)}")
+                return "cuda"
+            else:
+                logger.warning("CUDA requested but not available. Using CPU instead.")
+                logger.warning("This could mean:")
+                logger.warning("  1. PyTorch was installed without CUDA support")
+                logger.warning("  2. NVIDIA drivers are not installed")
+                logger.warning("  3. GPU is not accessible")
+                return "cpu"
+        elif device == "cpu":
             return "cpu"
-        return device
+        else:
+            logger.warning(f"Unknown device '{device}', using CPU")
+            return "cpu"
     
     def _load_model(self):
         """Load the Qwen model and tokenizer."""
@@ -56,23 +71,38 @@ class QwenChatbot:
                 **Config.get_model_kwargs()
             }
             
-            # Set dtype (replacing deprecated torch_dtype)
-            if self.device == "cuda" and torch.cuda.is_available():
-                load_kwargs["dtype"] = torch.float16
-                load_kwargs["device_map"] = "auto"
+            # Set dtype and device_map - force CPU if CUDA not actually available
+            cuda_available = torch.cuda.is_available()
+            if self.device == "cuda" and cuda_available:
+                try:
+                    # Test CUDA actually works
+                    test_tensor = torch.tensor([1.0]).cuda()
+                    del test_tensor
+                    torch.cuda.empty_cache()
+                    load_kwargs["dtype"] = torch.float16
+                    load_kwargs["device_map"] = "auto"
+                    logger.info("Using CUDA for model loading")
+                except Exception as e:
+                    logger.warning(f"CUDA test failed: {e}. Falling back to CPU.")
+                    self.device = "cpu"
+                    cuda_available = False
+                    load_kwargs["dtype"] = torch.float32
+                    load_kwargs["device_map"] = None
             else:
                 load_kwargs["dtype"] = torch.float32
                 load_kwargs["device_map"] = None
+                self.device = "cpu"
             
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 **load_kwargs
             )
             
-            # Move to CPU if needed (device_map="auto" handles CUDA automatically)
-            if self.device == "cpu" or not torch.cuda.is_available():
+            # Force move to CPU if CUDA not available
+            if not cuda_available or self.device == "cpu":
+                logger.info("Moving model to CPU...")
                 self.model = self.model.to("cpu")
-                self.device = "cpu"  # Ensure device is set correctly
+                self.device = "cpu"
             
             self.model.eval()
             logger.info("Model loaded successfully!")
@@ -129,12 +159,21 @@ class QwenChatbot:
                 text = self._format_messages_manual(messages)
             
             # Tokenize - ensure we use the correct device
-            # Determine actual device to use
-            if self.device == "cuda" and torch.cuda.is_available():
-                device = "cuda"
-            else:
-                device = "cpu"
-                self.device = "cpu"  # Update device if CUDA not available
+            # Double-check CUDA availability at runtime
+            device = "cpu"  # Default to CPU
+            if self.device == "cuda":
+                try:
+                    if torch.cuda.is_available():
+                        # Test if CUDA actually works
+                        test = torch.tensor([1.0]).cuda()
+                        del test
+                        device = "cuda"
+                    else:
+                        logger.warning("CUDA not available at runtime, using CPU")
+                        self.device = "cpu"
+                except Exception as e:
+                    logger.warning(f"CUDA error at runtime: {e}. Using CPU.")
+                    self.device = "cpu"
             
             model_inputs = self.tokenizer([text], return_tensors="pt").to(device)
             input_length = model_inputs.input_ids.shape[1]
