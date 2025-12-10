@@ -186,6 +186,11 @@ class QwenChatbot:
             if device == "cpu":
                 self.model = self.model.to("cpu")
             
+            # Remove pad_token_id and eos_token_id from gen_kwargs if present
+            # to avoid conflicts with explicit parameters
+            gen_kwargs.pop("pad_token_id", None)
+            gen_kwargs.pop("eos_token_id", None)
+            
             # Generate
             with torch.no_grad():
                 generated_ids = self.model.generate(

@@ -69,6 +69,6 @@ class Config:
             "top_p": cls.TOP_P,
             "top_k": cls.TOP_K,
             "do_sample": True,
-            "pad_token_id": None,  # Will be set in model if needed
+            # Note: pad_token_id and eos_token_id are set explicitly in model.py
         }
 
