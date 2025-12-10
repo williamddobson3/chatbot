@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen Chatbot</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Qwen Chatbot</h1>
+            <p class="subtitle">Powered by Qwen2.5-72B-Instruct</p>
+        </header>
+        
+        <div class="chat-container">
+            <div id="chat-messages" class="chat-messages">
+                <div class="message bot-message">
+                    <div class="message-content">
+                        <p>Hello! I'm Qwen, an AI assistant powered by Qwen2.5-72B-Instruct. How can I help you today?</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <div class="input-wrapper">
+                    <textarea 
+                        id="user-input" 
+                        placeholder="Type your message here... (Press Enter to send, Shift+Enter for new line)"
+                        rows="1"
+                    ></textarea>
+                    <button id="send-button" class="send-button">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    <span id="status" class="status">Ready</span>
+                    <button id="clear-button" class="clear-button">Clear Chat</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/script.js"></script>
+</body>
+</html>
+
