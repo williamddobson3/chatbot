@@ -63,8 +63,12 @@ class Config:
     @classmethod
     def get_generation_kwargs(cls) -> dict:
         """Get text generation kwargs."""
+        # Use smaller default for faster initial responses
+        # Users can override with max_length parameter
+        default_max_tokens = 512 if cls.DEVICE == "cuda" else 256
+        
         return {
-            "max_new_tokens": min(cls.MAX_LENGTH, 2048),  # Use max_new_tokens instead of max_length
+            "max_new_tokens": min(cls.MAX_LENGTH, default_max_tokens),
             "temperature": cls.TEMPERATURE,
             "top_p": cls.TOP_P,
             "top_k": cls.TOP_K,

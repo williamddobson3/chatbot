@@ -3,6 +3,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import Optional, List, Dict
 import logging
+import signal
+from contextlib import contextmanager
 from app.config import Config
 
 logger = logging.getLogger(__name__)
@@ -103,9 +105,22 @@ class QwenChatbot:
                 logger.info("Moving model to CPU...")
                 self.model = self.model.to("cpu")
                 self.device = "cpu"
+            else:
+                # Verify model is actually on GPU
+                try:
+                    # Check if model has parameters on CUDA
+                    first_param = next(self.model.parameters())
+                    if first_param.is_cuda:
+                        logger.info(f"Model is on GPU: {torch.cuda.get_device_name(0)}")
+                        logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+                    else:
+                        logger.warning("Model parameters are not on CUDA, moving to CPU")
+                        self.device = "cpu"
+                except Exception as e:
+                    logger.warning(f"Could not verify GPU placement: {e}")
             
             self.model.eval()
-            logger.info("Model loaded successfully!")
+            logger.info(f"Model loaded successfully on device: {self.device}!")
             
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
@@ -136,9 +151,10 @@ class QwenChatbot:
                 else:
                     gen_kwargs.pop("max_length")  # Remove max_length if max_new_tokens exists
             
-            # Ensure max_new_tokens is set
+            # Ensure max_new_tokens is set - use smaller values for faster response
             if "max_new_tokens" not in gen_kwargs:
-                gen_kwargs["max_new_tokens"] = 512  # Default reasonable value
+                # Use smaller default for faster responses
+                gen_kwargs["max_new_tokens"] = 256 if self.device == "cpu" else 512
             
             # Remove max_length from kwargs to avoid conflicts
             gen_kwargs.pop("max_length", None)
@@ -159,7 +175,7 @@ class QwenChatbot:
                 text = self._format_messages_manual(messages)
             
             # Tokenize - ensure we use the correct device
-            # Double-check CUDA availability at runtime
+            # Determine actual device to use - prefer GPU if available
             device = "cpu"  # Default to CPU
             if self.device == "cuda":
                 try:
@@ -167,13 +183,17 @@ class QwenChatbot:
                         # Test if CUDA actually works
                         test = torch.tensor([1.0]).cuda()
                         del test
+                        torch.cuda.empty_cache()
                         device = "cuda"
+                        logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
                     else:
                         logger.warning("CUDA not available at runtime, using CPU")
                         self.device = "cpu"
                 except Exception as e:
                     logger.warning(f"CUDA error at runtime: {e}. Using CPU.")
                     self.device = "cpu"
+            else:
+                logger.info("Using CPU for generation")
             
             model_inputs = self.tokenizer([text], return_tensors="pt").to(device)
             input_length = model_inputs.input_ids.shape[1]
@@ -184,21 +204,47 @@ class QwenChatbot:
             
             # Ensure model is on the correct device
             if device == "cpu":
-                self.model = self.model.to("cpu")
+                # Move model to CPU if not already there
+                try:
+                    first_param = next(self.model.parameters())
+                    if first_param.is_cuda:
+                        logger.warning("Model is on CUDA but device is CPU, moving to CPU...")
+                        self.model = self.model.to("cpu")
+                except:
+                    pass
+            else:
+                # Verify model is on GPU
+                try:
+                    first_param = next(self.model.parameters())
+                    if not first_param.is_cuda:
+                        logger.warning("Model is not on GPU, but device is CUDA. Model may use device_map='auto'.")
+                except:
+                    pass
             
             # Remove pad_token_id and eos_token_id from gen_kwargs if present
             # to avoid conflicts with explicit parameters
             gen_kwargs.pop("pad_token_id", None)
             gen_kwargs.pop("eos_token_id", None)
             
-            # Generate
-            with torch.no_grad():
-                generated_ids = self.model.generate(
-                    **model_inputs,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    **gen_kwargs
-                )
+            # Log generation start
+            logger.info(f"Starting generation on device: {device}, max_new_tokens: {gen_kwargs.get('max_new_tokens', 'N/A')}")
+            
+            # Generate with timeout protection
+            try:
+                with torch.no_grad():
+                    generated_ids = self.model.generate(
+                        **model_inputs,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        **gen_kwargs
+                    )
+                logger.info(f"Generation completed, output length: {generated_ids.shape[1]}")
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    logger.error("GPU out of memory! Try reducing max_new_tokens or using CPU.")
+                    raise
+                else:
+                    raise
             
             # Extract only the new tokens (response)
             generated_ids = generated_ids[0][input_length:]

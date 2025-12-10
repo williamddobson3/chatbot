@@ -114,10 +114,24 @@ async def chat(request: ChatRequest):
         if request.top_p is not None:
             gen_kwargs["top_p"] = request.top_p
         
-        # Generate response
+        # Generate response with timeout
+        import asyncio
         logger.info(f"Generating response with {len(messages)} messages")
-        response = chatbot.chat(messages, **gen_kwargs)
-        logger.info(f"Generated response length: {len(response)}")
+        
+        try:
+            # Run generation in executor with timeout
+            loop = asyncio.get_event_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: chatbot.chat(messages, **gen_kwargs)),
+                timeout=300.0  # 5 minute timeout
+            )
+            logger.info(f"Generated response length: {len(response)}")
+        except asyncio.TimeoutError:
+            logger.error("Generation timed out after 5 minutes")
+            raise HTTPException(
+                status_code=504,
+                detail="Generation timed out. The model is taking too long to respond. Try reducing max_length or check GPU usage."
+            )
         
         return ChatResponse(response=response, status="success")
         
