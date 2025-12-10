@@ -2,8 +2,30 @@
 import os
 from typing import Optional
 from dotenv import load_dotenv
+import torch
 
 load_dotenv()
+
+
+def _get_device() -> str:
+    """Auto-detect device, fallback to CPU if CUDA not available."""
+    device_env = os.getenv("DEVICE", "auto")
+    
+    if device_env.lower() == "auto":
+        # Auto-detect: use CUDA if available, otherwise CPU
+        if torch.cuda.is_available():
+            return "cuda"
+        else:
+            return "cpu"
+    elif device_env.lower() == "cuda":
+        # Check if CUDA is actually available
+        if torch.cuda.is_available():
+            return "cuda"
+        else:
+            print("WARNING: CUDA requested but not available. Falling back to CPU.")
+            return "cpu"
+    else:
+        return device_env.lower()
 
 
 class Config:
@@ -13,8 +35,8 @@ class Config:
     MODEL_PATH: str = os.getenv("MODEL_PATH", "Qwen/Qwen2.5-72B-Instruct")
     MODEL_LOCAL_DIR: str = os.getenv("MODEL_LOCAL_DIR", "./models/Qwen2.5-72B-Instruct")
     
-    # Device Configuration
-    DEVICE: str = os.getenv("DEVICE", "cuda")
+    # Device Configuration (auto-detects CUDA availability)
+    DEVICE: str = _get_device()
     
     # Generation Parameters
     MAX_LENGTH: int = int(os.getenv("MAX_LENGTH", "2048"))

@@ -14,8 +14,17 @@ class QwenChatbot:
     def __init__(self):
         self.model = None
         self.tokenizer = None
-        self.device = Config.DEVICE
+        # Ensure device is valid
+        self.device = self._get_valid_device(Config.DEVICE)
+        logger.info(f"Using device: {self.device}")
         self._load_model()
+    
+    def _get_valid_device(self, device: str) -> str:
+        """Get a valid device string, ensuring CUDA is available if requested."""
+        if device == "cuda" and not torch.cuda.is_available():
+            logger.warning("CUDA requested but not available. Using CPU instead.")
+            return "cpu"
+        return device
     
     def _load_model(self):
         """Load the Qwen model and tokenizer."""
@@ -41,17 +50,29 @@ class QwenChatbot:
             
             # Load model
             logger.info("Loading model (this may take a while)...")
+            load_kwargs = {
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True,
+                **Config.get_model_kwargs()
+            }
+            
+            # Set dtype (replacing deprecated torch_dtype)
+            if self.device == "cuda" and torch.cuda.is_available():
+                load_kwargs["dtype"] = torch.float16
+                load_kwargs["device_map"] = "auto"
+            else:
+                load_kwargs["dtype"] = torch.float32
+                load_kwargs["device_map"] = None
+            
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                device_map="auto" if self.device == "cuda" else None,
-                trust_remote_code=True,
-                low_cpu_mem_usage=True,
-                **Config.get_model_kwargs()
+                **load_kwargs
             )
             
-            if self.device == "cpu":
-                self.model = self.model.to(self.device)
+            # Move to CPU if needed (device_map="auto" handles CUDA automatically)
+            if self.device == "cpu" or not torch.cuda.is_available():
+                self.model = self.model.to("cpu")
+                self.device = "cpu"  # Ensure device is set correctly
             
             self.model.eval()
             logger.info("Model loaded successfully!")
@@ -107,13 +128,24 @@ class QwenChatbot:
                 logger.warning(f"Error applying chat template: {e}, using manual formatting")
                 text = self._format_messages_manual(messages)
             
-            # Tokenize
-            model_inputs = self.tokenizer([text], return_tensors="pt").to(self.device)
+            # Tokenize - ensure we use the correct device
+            # Determine actual device to use
+            if self.device == "cuda" and torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
+                self.device = "cpu"  # Update device if CUDA not available
+            
+            model_inputs = self.tokenizer([text], return_tensors="pt").to(device)
             input_length = model_inputs.input_ids.shape[1]
             
             # Set pad_token if not set
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
+            
+            # Ensure model is on the correct device
+            if device == "cpu":
+                self.model = self.model.to("cpu")
             
             # Generate
             with torch.no_grad():
